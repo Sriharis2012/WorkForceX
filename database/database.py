@@ -14,11 +14,27 @@ if DB_PATH != DEFAULT_DB_PATH and not os.path.exists(DB_PATH):
         import shutil
         shutil.copy2(DEFAULT_DB_PATH, DB_PATH)
 
-DATABASE_URL = f"sqlite:///{DB_PATH}"
+DATABASE_URL = os.environ.get("DATABASE_URL")
 
-engine = create_engine(
-    DATABASE_URL,
-    connect_args={"check_same_thread": False}
+if DATABASE_URL:
+    # Use the PostgreSQL driver installed in requirements.txt.
+    if DATABASE_URL.startswith("postgres://"):
+        DATABASE_URL = DATABASE_URL.replace(
+            "postgres://", "postgresql+psycopg://", 1
+        )
+    elif DATABASE_URL.startswith("postgresql://"):
+        DATABASE_URL = DATABASE_URL.replace(
+            "postgresql://", "postgresql+psycopg://", 1
+        )
+
+    engine = create_engine(DATABASE_URL, pool_pre_ping=True)
+else:
+    DATABASE_URL = f"sqlite:///{DB_PATH}"
+    engine = create_engine(
+        DATABASE_URL,
+        connect_args={"check_same_thread": False}
+    )
+
 )
 
 SessionLocal = sessionmaker(bind=engine)
@@ -152,23 +168,27 @@ class ProjectMember(Base):
 Base.metadata.create_all(bind=engine)
 
 
+
 def _ensure_column(table_name, column_name, column_ddl):
-    """
-    Lightweight, additive sqlite migration: create_all() only creates
-    MISSING TABLES, it never adds a missing column to a table that
-    already exists on disk. Without this, a workforce.db created
-    before Step 4 would be missing Task.evidence_url and every query
-    would break. Safe to call every startup — it's a no-op once the
-    column exists, and it never touches existing data.
-    """
-    from sqlalchemy import text
-    with engine.connect() as conn:
-        existing_cols = {row[1] for row in conn.execute(text(f"PRAGMA table_info({table_name})"))}
-        if column_name not in existing_cols:
-            conn.execute(text(f"ALTER TABLE {table_name} ADD COLUMN {column_name} {column_ddl}"))
-            conn.commit()
+    """Add a missing column without using SQLite-only SQL."""
+    from sqlalchemy import inspect, text
+
+    existing_cols = {
+        column["name"]
+        for column in inspect(engine).get_columns(table_name)
+    }
+
+    if column_name not in existing_cols:
+        with engine.begin() as conn:
+            conn.execute(
+                text(
+                    f"ALTER TABLE {table_name} "
+                    f"ADD COLUMN {column_name} {column_ddl}"
+                )
+            )
 
 
 _ensure_column("tasks", "evidence_url", "VARCHAR")
+
 
 print("Database created successfully!")
