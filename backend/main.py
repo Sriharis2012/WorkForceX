@@ -559,6 +559,48 @@ def rfid_scan(rfid_uid: str):
     db.close()
 
     return result
+    
+class RFIDUpdate(BaseModel):
+    rfid_uid: str
+
+@app.put("/employees/{employee_id}/rfid")
+def update_employee_rfid(employee_id: str, payload: RFIDUpdate):
+    db = SessionLocal()
+    try:
+        employee = (
+            db.query(Employee)
+            .filter(Employee.employee_id == employee_id)
+            .first()
+        )
+
+        if not employee:
+            raise HTTPException(status_code=404, detail="Employee not found")
+
+        new_uid = payload.rfid_uid.strip().upper()
+
+        existing = (
+            db.query(Employee)
+            .filter(Employee.rfid_uid == new_uid)
+            .first()
+        )
+
+        if existing and existing.id != employee.id:
+            raise HTTPException(
+                status_code=409,
+                detail="RFID UID is already assigned to another employee"
+            )
+
+        employee.rfid_uid = new_uid
+        db.commit()
+
+        return {
+            "success": True,
+            "employee_id": employee.employee_id,
+            "rfid_uid": employee.rfid_uid
+        }
+    finally:
+        db.close()
+
 # ==================================================
 # TASK MANAGEMENT (status/history are explicit only —
 # RFID scans never touch task status or progress)
